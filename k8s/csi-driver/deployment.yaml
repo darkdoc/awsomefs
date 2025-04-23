@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: awesomefs-csi
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: awesomefs-csi
+  template:
+    metadata:
+      labels:
+        app: awesomefs-csi
+    spec:
+      containers:
+        - name: csi-driver
+          image: localhost/awsomefs/csi-driver:latest
+          imagePullPolicy: Never
+          args:
+            - "--nodeid=$(NODE_NAME)"
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName

@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metadata-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: metadata-service
+  template:
+    metadata:
+      labels:
+        app: metadata-service
+    spec:
+      containers:
+        - name: metadata-service
+          image: localhost/awsomefs/metadata-service:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: metadata-service
+spec:
+  selector:
+    app: metadata-service
+  ports:
+    - port: 8080
+      targetPort: 8080

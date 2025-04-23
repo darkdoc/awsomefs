@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fs-core
+spec:
+  selector:
+    matchLabels:
+      app: fs-core
+  template:
+    metadata:
+      labels:
+        app: fs-core
+    spec:
+      containers:
+        - name: fs-core
+          image: localhost/awsomefs/fs-core:latest
+          imagePullPolicy: Never
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: raw-device
+              mountPath: /dev/sdb  # Adjust to match loop device path
+      volumes:
+        - name: raw-device
+          hostPath:
+            path: /dev/sdb  # Replace with loopback device path
