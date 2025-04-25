@@ -1,0 +1,16 @@
+syntax = "proto3";
+package metadata;
+
+service Metadata {
+  rpc AcquireLock(LockRequest) returns (LockResponse);
+  rpc ReleaseLock(LockRequest) returns (LockResponse);
+}
+
+message LockRequest {
+  string key = 1;
+}
+
+message LockResponse {
+  bool success = 1;
+  string message = 2;
+}

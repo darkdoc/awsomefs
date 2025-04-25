@@ -4,3 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+proto = { path = "../internal/proto" }
+
+tonic = "0.11"
+prost = "0.12"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber =  { version = "0.3.19", features = ["env-filter"] }
+tracing-log = "0.2.0"
+
+[build-dependencies]
+tonic-build = "*"

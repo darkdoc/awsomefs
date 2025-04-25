@@ -5,112 +5,19 @@ use fuser::{
 
 use libc::{EIO, ENOENT};
 use std::ffi::OsStr;
+use std::sync::{Arc,Mutex};
 use std::time::{Duration, SystemTime};
 // , UNIX_EPOCH};
-
-use std::collections::HashMap;
 
 const TTL: Duration = Duration::from_secs(1); // 1 second
 const ROOT_INO: u64 = 1;
 
-pub struct FsCore {
-    inode_counter: u64,
-    inode_attrs: HashMap<u64, FileAttr>,
-    inode_data: HashMap<u64, Vec<u8>>,
-    path_to_ino: HashMap<String, u64>,
-}
-
-impl FsCore {
-    pub fn new() -> Self {
-        let mut fs = FsCore {
-            inode_counter: 2, // 1 = root, start from 2
-            inode_attrs: HashMap::new(),
-            inode_data: HashMap::new(),
-            path_to_ino: HashMap::new(),
-        };
-
-        // Add root dir
-        let root_attr = FileAttr {
-            ino: 1,
-            size: 0,
-            blocks: 0,
-            atime: SystemTime::now(),
-            mtime: SystemTime::now(),
-            ctime: SystemTime::now(),
-            crtime: SystemTime::now(),
-            kind: FileType::Directory,
-            perm: 0o755,
-            nlink: 2,
-            uid: 1000,
-            gid: 1000,
-            rdev: 0,
-            flags: 0,
-            blksize: 512,
-        };
-
-        fs.inode_attrs.insert(1, root_attr);
-        fs.path_to_ino.insert("/".into(), 1);
-
-        // Add /hello.txt
-        let ino = fs.allocate_inode();
-        let content = b"hello world\n".to_vec();
-        let attr = FileAttr {
-            ino,
-            size: content.len() as u64,
-            blocks: 1,
-            atime: SystemTime::now(),
-            mtime: SystemTime::now(),
-            ctime: SystemTime::now(),
-            crtime: SystemTime::now(),
-            kind: FileType::RegularFile,
-            perm: 0o644,
-            nlink: 1,
-            uid: 1000,
-            gid: 1000,
-            rdev: 0,
-            flags: 0,
-            blksize: 512,
-        };
-
-        fs.inode_attrs.insert(ino, attr);
-        fs.inode_data.insert(ino, content);
-        fs.path_to_ino.insert("/hello.txt".into(), ino);
-
-        fs
-    }
-
-    fn allocate_inode(&mut self) -> u64 {
-        let ino = self.inode_counter;
-        self.inode_counter += 1;
-        ino
-    }
-
-    pub fn write_to_inode(&mut self, ino: u64, offset: u64, data: &[u8]) -> usize {
-        // Get or create the data buffer for this inode
-        let file_data = self.inode_data.entry(ino).or_insert_with(Vec::new);
-
-        let end_offset = (offset as usize) + data.len();
-        if file_data.len() < end_offset {
-            file_data.resize(end_offset, 0);
-        }
-
-        file_data[offset as usize..end_offset].copy_from_slice(data);
-
-        // Update file size in FileAttr
-        if let Some(attr) = self.inode_attrs.get_mut(&ino) {
-            attr.size = file_data.len() as u64;
-        }
-
-        data.len()
-    }
-}
-
 pub struct AwsomeFs {
-    core: FsCore,
+    core: Arc<Mutex<crate::FsCore>>,
 }
 
 impl AwsomeFs {
-    pub fn new(core: FsCore) -> Self {
+    pub fn new(core: Arc<Mutex<crate::FsCore>>) -> Self {
         Self { core }
     }
 }
@@ -161,6 +68,7 @@ impl Filesystem for AwsomeFs {
             reply.error(ENOENT);
         }
     }
+
     fn readdir(
         &mut self,
         _req: &Request<'_>,
@@ -177,7 +85,6 @@ impl Filesystem for AwsomeFs {
         let mut entries = vec![
             (ROOT_INO, FileType::Directory, ".".into()),
             (ROOT_INO, FileType::Directory, "..".into()),
-            // (2, FileType::RegularFile, "hello.txt"),
         ];
 
         for (path, &ino) in &self.core.path_to_ino {
@@ -219,7 +126,7 @@ impl Filesystem for AwsomeFs {
         _lock_owner: Option<u64>,
         reply: fuser::ReplyWrite,
     ) {
-        let written = self.core.write_to_inode(ino, offset as u64, data);
+        let written = self.core.write_and_persist_inode(ino, offset as u64, data);
         reply.written(written as u32);
         // return some error if write failed
         // reply.error(EIO);
@@ -232,41 +139,49 @@ impl Filesystem for AwsomeFs {
         name: &OsStr,
         _mode: u32,
         _umask: u32,
-        _flags: i32,
+        flags: i32,
         reply: fuser::ReplyCreate,
     ) {
-        log::trace!("create(parent: {}, name: {:?})", parent, name);
+        let path = format!("/{}", name.to_string_lossy());
 
-        let name_str = name.to_str().unwrap_or("");
-        let full_path = format!("/{name_str}");
+        tracing::trace!(
+            "FUSE create request for file '{}' in parent inode {}",
+            path,
+            parent
+        );
+        let core = self.core.clone(); // you'll need Arc<Mutex<FsCore>>
 
-        let ino = self.core.inode_counter + 1;
-        self.core.inode_counter = ino;
 
-        let attr = FileAttr {
-            ino,
-            size: 0,
-            blocks: 1,
-            atime: SystemTime::now(),
-            mtime: SystemTime::now(),
-            ctime: SystemTime::now(),
-            crtime: SystemTime::now(),
-            kind: FileType::RegularFile,
-            perm: 0o644,
-            nlink: 1,
-            uid: 1000,
-            gid: 1000,
-            rdev: 0,
-            flags: 0,
-            blksize: 512,
-        };
+        tokio::spawn(async move {
+            let mut core = match core.lock() {
+                Ok(c) => c,
+                Err(poisoned) => poisoned.into_inner(),
+            };
 
-        self.core.inode_attrs.insert(ino, attr);
-        self.core.path_to_ino.insert(full_path.clone(), ino);
-        self.core.inode_data.insert(ino, vec![]);
+            match core.create_file(&path, b"").await {
+                Ok(ino) => {
+                    if let Some(attr) = core.inode_attrs.get(&ino) {
+                        reply.created(
+                            &Duration::from_secs(1), // entry_valid
+                            attr,
+                            0, // generation
+                            flags.try_into().unwrap(),
+                            0, // open_flags
+                        );
+                    } else {
+                        tracing::error!("Missing inode attr after creation");
+                        reply.error(ENOENT);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("create_file failed: {:?}", e);
+                    reply.error(EIO);
+                }
+            }
+        });
 
-        reply.created(&TTL, &attr, 0, 0, 0);
     }
+
     fn setattr(
         &mut self,
         _req: &Request<'_>,
@@ -304,7 +219,8 @@ impl Filesystem for AwsomeFs {
                 attr.mtime = match new_mtime {
                     TimeOrNow::SpecificTime(t) => t,
                     TimeOrNow::Now => SystemTime::now(),
-                };            }
+                };
+            }
 
             if let Some(new_atime) = atime {
                 attr.atime = match new_atime {
@@ -322,5 +238,6 @@ impl Filesystem for AwsomeFs {
             reply.error(libc::ENOENT);
         }
     }
+
     // Implement more methods: readdir, read, write, etc.
 }
