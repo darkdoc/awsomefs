@@ -189,6 +189,52 @@ impl FsCoreInner {
         self.inode_data.insert(ROOT_INO, Vec::new()); // empty directory data
         self.path_to_ino.insert("/".to_string(), ROOT_INO);
     }
+
+    pub fn mkdir(
+        &mut self,
+        parent: u64,
+        name: &str,
+        uid: u32,
+        gid: u32,
+    ) -> std::io::Result<FileAttr> {
+        let ino = self.inode_counter;
+        self.inode_counter += 1;
+
+        let attr = FileAttr {
+            ino,
+            size: 0,
+            blocks: 0,
+            atime: SystemTime::now(),
+            mtime: SystemTime::now(),
+            ctime: SystemTime::now(),
+            crtime: SystemTime::now(),
+            kind: fuser::FileType::Directory,
+            perm: 0o755,
+            nlink: 2,
+            uid,
+            gid,
+            rdev: 0,
+            flags: 0,
+            blksize: 512,
+        };
+
+        let path = if parent == ROOT_INO {
+            format!("/{}", name)
+        } else {
+            // In real FS: lookup parent path and concatenate
+            unimplemented!("nested dirs not yet fully supported yet");
+        };
+
+        self.path_to_ino.insert(path.clone(), ino);
+        self.inode_attrs.insert(ino, attr.clone());
+        self.inode_data.insert(ino, Vec::new());
+        self.parent_to_children
+            .entry(parent)
+            .or_default()
+            .insert(name.to_string(), ino);
+
+        Ok(attr)
+    }
 }
 
 pub struct FsCore {

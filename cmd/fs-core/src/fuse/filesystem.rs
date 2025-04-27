@@ -61,18 +61,32 @@ impl Filesystem for AwsomeFs {
             }
         });
     }
+    fn mkdir(
+        &mut self,
+        _req: &Request<'_>,
+        parent: u64,
+        name: &OsStr,
+        _mode: u32,
+        _umask: u32,
+        reply: ReplyEntry,
+    ) {
+        let name = name.to_string_lossy().to_string();
+        let core = self.core.clone(); // Arc<FsCore>
 
-    // fn mkdir(
-    //         &mut self,
-    //         _req: &Request<'_>,
-    //         parent: u64,
-    //         name: &OsStr,
-    //         mode: u32,
-    //         umask: u32,
-    //         reply: ReplyEntry,
-    //     ) {
+        tokio::task::block_in_place(|| {
+            let mut inner = core.blocking_lock_inner();
 
-    // }
+            match inner.mkdir(parent, &name, 1000, 1000) {
+                // TODO: real uid/gid
+                Ok(attr) => {
+                    reply.entry(&TTL, &attr, 0);
+                }
+                Err(_) => {
+                    reply.error(libc::EIO);
+                }
+            }
+        });
+    }
 
     fn read(
         &mut self,

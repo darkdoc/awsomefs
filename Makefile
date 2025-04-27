@@ -105,4 +105,5 @@ clean: ## Cleanup
 	cd $(CSI_DRIVER_DIR) && go clean
 	make -C $(KERNEL_MODULE_DIR) clean
 	kind delete cluster --name $(REPO_NAME)
+	rm /tmp/loopback-device
 
