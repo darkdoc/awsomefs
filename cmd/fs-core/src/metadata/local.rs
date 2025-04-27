@@ -18,6 +18,7 @@ impl LocalMetadataCoordinator {
     }
 }
 
+#[tonic::async_trait]
 impl MetadataCoordinator for LocalMetadataCoordinator {
     async fn lock(
         &self,

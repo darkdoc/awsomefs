@@ -11,7 +11,7 @@ use proto::metadata::{
 
 #[derive(Debug, Default)]
 pub struct MetadataService {
-    locked_keys: Arc<Mutex<HashSet<String>>>,
+    locked_keys: Arc<Mutex<HashSet<u64>>>,
 }
 
 #[tonic::async_trait]

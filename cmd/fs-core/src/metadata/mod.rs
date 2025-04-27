@@ -9,7 +9,7 @@ pub mod remote;
 
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct LockKey(pub String); // will be inode ID, inode path for now
+pub struct LockKey(pub u64); // inode ID
 
 #[derive(Debug)]
 pub enum LockType {

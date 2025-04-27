@@ -7,7 +7,7 @@ service Metadata {
 }
 
 message LockRequest {
-  string key = 1;
+  uint64 key = 1;
 }
 
 message LockResponse {
