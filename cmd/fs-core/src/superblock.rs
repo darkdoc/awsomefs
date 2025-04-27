@@ -1,6 +1,6 @@
-use serde::{Serialize, Deserialize};
-use std::io::{Read, Write, Seek, SeekFrom};
+use serde::{Deserialize, Serialize};
 use std::fs::File;
+use std::io::{Read, Seek, SeekFrom, Write};
 
 const SUPERBLOCK_OFFSET: u64 = 0;
 const SUPERBLOCK_MAGIC: u64 = 0xAABBCCDD11223344;
@@ -8,11 +8,11 @@ const SUPERBLOCK_VERSION: u32 = 1;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Superblock {
-    pub magic: u64,            // Magic number for identification
-    pub version: u32,          // Filesystem version
-    pub uuid: [u8; 16],        // basic uuid field
-    pub block_size: u32,       // Block size in bytes
-    pub inode_count: u64,      // Total number of inodes
+    pub magic: u64,       // Magic number for identification
+    pub version: u32,     // Filesystem version
+    pub uuid: [u8; 16],   // basic uuid field
+    pub block_size: u32,  // Block size in bytes
+    pub inode_count: u64, // Total number of inodes
     // pub block_count: u64,      // Total number of blocks
     // pub free_block_count: u64, // Free block count
     pub free_inode_count: u64, // Free inode count
@@ -30,7 +30,7 @@ impl Superblock {
             free_inode_count: total_inodes,
         }
     }
-    // pub fn load(bd: &super::block::BlockDevice) -> std::io::Result<Self> {
+
     pub fn load(file: &mut File) -> std::io::Result<Self> {
         file.seek(SeekFrom::Start(SUPERBLOCK_OFFSET))?;
         let mut buf = [0u8; 512];
@@ -38,7 +38,10 @@ impl Superblock {
         let sb: Superblock = bincode::deserialize(&buf)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         if sb.magic != SUPERBLOCK_MAGIC {
-            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Invalid magic number"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Invalid magic number",
+            ));
         }
         Ok(sb)
     }
