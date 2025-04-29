@@ -11,16 +11,38 @@ spec:
       labels:
         app: fs-core
     spec:
+      initContainers:
+        - name: create-mount-dir
+          image: busybox:latest
+          command: ["sh", "-c", "mkdir -p /mnt/awsomefs"]
+          volumeMounts:
+            - mountPath: /mnt/awsomefs
+              name: mount-path
       containers:
         - name: fs-core
           image: localhost/awsomefs/fs-core:latest
+          args:
+            - mount
+            - --device
+            - /dev/sdb
+            - --mountpoint
+            - /mnt/awsomefs
+          env:
+          - name: RUST_LOG
+            value: trace
           imagePullPolicy: Never
           securityContext:
             privileged: true
           volumeMounts:
+            - mountPath: /mnt/awsomefs
+              name: mount-path
+              mountPropagation: Bidirectional
             - name: raw-device
               mountPath: /dev/sdb  # Adjust to match loop device path
       volumes:
+        - name: mount-path
+          hostPath:
+            path: /mnt/awsomefs
         - name: raw-device
           hostPath:
             path: /dev/sdb  # Replace with loopback device path

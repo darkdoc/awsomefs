@@ -16,8 +16,8 @@ spec:
         - name: csi-driver
           image: localhost/awsomefs/csi-awsomefs:latest
           imagePullPolicy: Never
-          args:
-            - "--nodeid=$(NODE_NAME)"
+          # args:
+          #   - "--nodeid=$(NODE_NAME)"
           env:
             - name: NODE_NAME
               valueFrom:

@@ -33,7 +33,7 @@ help: ## Display this help.
 build: 
 	cargo build --manifest-path $(FS_CORE_DIR)/Cargo.toml --release
 	cargo build --manifest-path $(METADATA_SERVICE_DIR)/Cargo.toml --release
-	cd $(CSI_DRIVER_DIR) && go build -o csi-awsomefs main.go
+	cd $(CSI_DRIVER_DIR) && go build -o target/csi-awsomefs main.go
 	make -C $(KERNEL_MODULE_DIR) 
 
 
@@ -46,10 +46,10 @@ test: ## test all components
 docker: docker-fs-core docker-metadata-service docker-csi-driver ## build docker image of all components
 
 docker-fs-core: ## build docker image of fs-core
-	docker build -t $(FS_CORE_IMAGE) $(FS_CORE_DIR)
+	docker build -t $(FS_CORE_IMAGE) -f $(FS_CORE_DIR)/Dockerfile .
 
 docker-metadata-service: ## build docker image of metadata-service
-	docker build -t $(METADATA_IMAGE) $(METADATA_SERVICE_DIR)
+	docker build -t $(METADATA_IMAGE) -f $(METADATA_SERVICE_DIR)/Dockerfile .
 
 docker-csi-driver: ## build docker image of csi-driver
 	docker build -t $(CSI_DRIVER_IMAGE) $(CSI_DRIVER_DIR)
@@ -87,7 +87,7 @@ kind-load: ## Load images to kind-cluster
 # 	done
 
 
-deploy: kind-load ## Deploy all components to the kind cluster
+deploy: ## Deploy all components to the kind cluster
 	kubectl apply -f k8s/metadata-service/
 	kubectl apply -f k8s/fs-core/
 	kubectl apply -f k8s/csi-driver/
