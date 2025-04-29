@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: csi-driver
-          image: localhost/awsomefs/csi-driver:latest
+          image: localhost/awsomefs/csi-awsomefs:latest
           imagePullPolicy: Never
           args:
             - "--nodeid=$(NODE_NAME)"

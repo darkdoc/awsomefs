@@ -6,13 +6,13 @@ VERSION  ?= latest
 # Paths
 FS_CORE_DIR := cmd/fs-core
 METADATA_SERVICE_DIR := cmd/metadata-service
-CSI_DRIVER_DIR := cmd/csi-driver
+CSI_DRIVER_DIR := cmd/csi-awsomefs
 KERNEL_MODULE_DIR := kernel/fs_driver
 
 # Docker image names
 FS_CORE_IMAGE := $(REGISTRY)/fs-core:$(VERSION)
 METADATA_IMAGE := $(REGISTRY)/metadata-service:$(VERSION)
-CSI_DRIVER_IMAGE := $(REGISTRY)/csi-driver:$(VERSION)
+CSI_DRIVER_IMAGE := $(REGISTRY)/csi-awsomefs:$(VERSION)
 
 # Kernel module paths
 KERNEL_MODULE := $(KERNEL_MODULE_DIR)/fs_module.ko
@@ -33,7 +33,7 @@ help: ## Display this help.
 build: 
 	cargo build --manifest-path $(FS_CORE_DIR)/Cargo.toml --release
 	cargo build --manifest-path $(METADATA_SERVICE_DIR)/Cargo.toml --release
-	cd $(CSI_DRIVER_DIR) && go build -o csi-driver main.go
+	cd $(CSI_DRIVER_DIR) && go build -o csi-awsomefs main.go
 	make -C $(KERNEL_MODULE_DIR) 
 
 
