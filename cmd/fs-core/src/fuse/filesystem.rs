@@ -7,6 +7,8 @@ use libc::{EIO, ENOENT};
 use std::ffi::OsStr;
 use std::sync::Arc;
 
+use crate::layout::*;
+
 use std::time::{Duration, SystemTime};
 
 const TTL: Duration = Duration::from_secs(1); // 1 second
@@ -25,21 +27,24 @@ impl AwsomeFs {
 
 impl Filesystem for AwsomeFs {
     fn lookup(&mut self, _req: &Request<'_>, _parent: u64, name: &OsStr, reply: ReplyEntry) {
-        // Stub
         let path = format!("/{}", name.to_str().unwrap_or(""));
+        let core = self.core.clone();
 
-        let core = self.core.clone(); // you'll need Arc<Mutex<FsCore>>
         tokio::spawn(async move {
             core.with_inner(|inner| {
-                if let Some(&ino) = inner.path_to_ino.get(&path) {
-                    if let Some(attr) = inner.inode_attrs.get(&ino) {
-                        reply.entry(&TTL, attr, 0);
-                    } else {
-                        reply.error(ENOENT);
+                inner.load_superblock().unwrap();
+
+                for ino in 1..inner.inode_counter + 1 {
+                    if let Ok(inode) = inner.get_or_load_inode(ino) {
+                        if inode.path == path {
+                            reply.entry(&TTL, &inode.attr.into(), 0);
+                            return;
+                        }
                     }
-                } else {
-                    reply.error(ENOENT);
                 }
+                tracing::info!("this is where its wrong {} for", path);
+
+                reply.error(ENOENT);
             })
             .await;
         });
@@ -47,20 +52,22 @@ impl Filesystem for AwsomeFs {
 
     fn getattr(&mut self, _req: &Request<'_>, ino: u64, reply: ReplyAttr) {
         let core = self.core.clone();
+
         tokio::task::block_in_place(|| {
-            let inner = core.blocking_lock_inner();
-            if let Some(attr) = inner.inode_attrs.get(&ino) {
-                reply.attr(&TTL, attr);
-            } else {
-                tracing::info!(
-                    "getattr inode: {}",
-                    ino,
-                    // parent
-                );
-                reply.error(ENOENT);
+            let mut inner = core.blocking_lock_inner();
+
+            match inner.get_or_load_inode(ino) {
+                Ok(inode) => {
+                    reply.attr(&TTL, &inode.attr.into());
+                }
+                Err(_) => {
+                    tracing::info!("getattr: inode {} not found", ino);
+                    reply.error(ENOENT);
+                }
             }
         });
     }
+
     fn mkdir(
         &mut self,
         _req: &Request<'_>,
@@ -99,20 +106,21 @@ impl Filesystem for AwsomeFs {
         _lock: Option<u64>,
         reply: ReplyData,
     ) {
-        let core = self.core.clone(); // you'll need Arc<Mutex<FsCore>>
+        let core = self.core.clone();
+
         tokio::spawn(async move {
-            core.with_inner(|inner| {
-                if let Some(data) = inner.inode_data.get(&ino) {
+            core.with_inner(|inner| match inner.load_inode(ino) {
+                Ok(inode) => {
                     let start = offset as usize;
-                    let end = (start + size as usize).min(data.len());
-                    if start >= data.len() {
+                    let end = (start + size as usize).min(inode.data.len());
+
+                    if start >= inode.data.len() {
                         reply.data(&[]);
                     } else {
-                        reply.data(&data[start..end]);
+                        reply.data(&inode.data[start..end]);
                     }
-                } else {
-                    reply.error(ENOENT);
                 }
+                Err(_) => reply.error(ENOENT),
             })
             .await;
         });
@@ -126,32 +134,46 @@ impl Filesystem for AwsomeFs {
         offset: i64,
         mut reply: ReplyDirectory,
     ) {
-        if ino != crate::ROOT_INO {
-            reply.error(ENOENT);
-            return;
-        }
+        let core = self.core.clone();
 
-        let core = self.core.clone(); // Arc<FsCore>
-
-        // Use tokio::task::block_in_place because readdir must be synchronous
         tokio::task::block_in_place(|| {
-            let entries = {
-                let inner = core.blocking_lock_inner();
-                let mut entries = vec![
-                    (ino, FileType::Directory, ".".into()),
-                    (crate::ROOT_INO, FileType::Directory, "..".into()),
-                ];
+            let mut inner = core.blocking_lock_inner();
 
-                if let Some(children) = inner.parent_to_children.get(&ino) {
-                    for (name, &child_ino) in children {
-                        if let Some(attr) = inner.inode_attrs.get(&child_ino) {
-                            entries.push((child_ino, attr.kind, name.clone()));
+            let mut entries = vec![
+                (ino, FileType::Directory, ".".into()),
+                (crate::ROOT_INO, FileType::Directory, "..".into()),
+            ];
+
+            match inner.get_or_load_inode(ino) {
+                Ok(inode) => {
+                    let dir_entries: Vec<DirectoryEntry> = if inode.data.is_empty()
+                        || inode.attr.kind != FileType::Directory
+                    {
+                        Vec::new()
+                    } else {
+                        match bincode::deserialize::<Vec<DirectoryEntry>>(&inode.data) {
+                            Ok(entries) => entries,
+                            Err(e) => {
+                                tracing::error!("Failed to deserialize directory entries: {}", e);
+                                Vec::new()
+                            }
                         }
+                    };
+
+                    for entry in dir_entries {
+                        let file_type = match inner.get_or_load_inode(entry.ino) {
+                            Ok(child_inode) => child_inode.attr.kind.into(),
+                            Err(_) => FileType::RegularFile, // fallback
+                        };
+
+                        entries.push((entry.ino, file_type, entry.name));
                     }
                 }
-
-                entries
-            };
+                Err(_) => {
+                    reply.error(ENOENT);
+                    return;
+                }
+            }
 
             for (i, entry) in entries.into_iter().enumerate().skip(offset as usize) {
                 if reply.add(entry.0, (i + 1) as i64, entry.1, entry.2) {
@@ -163,15 +185,100 @@ impl Filesystem for AwsomeFs {
         });
     }
 
+    // fn readdir(
+    //     &mut self,
+    //     _req: &Request<'_>,
+    //     ino: u64,
+    //     _fh: u64,
+    //     offset: i64,
+    //     mut reply: ReplyDirectory,
+    // ) {
+    //     let core = self.core.clone();
+
+    //     tokio::task::block_in_place(|| {
+    //         let entries = {
+    //             let mut inner = core.blocking_lock_inner();
+
+    //             let mut entries = vec![
+    //                 (ino, FileType::Directory, ".".into()),
+    //                 (crate::ROOT_INO, FileType::Directory, "..".into()),
+    //             ];
+
+    //             match inner.load_inode(ino) {
+    //                 Ok(inode) => {
+    //                     tracing::error!("readdir Loaded inode: {:?}", inode);
+    //                     let dir_entries: Vec<DirectoryEntry> = if inode.data.is_empty()
+    //                         || inode.attr.kind != fuser::FileType::Directory
+    //                     {
+    //                         Vec::new()
+    //                     } else {
+    //                         bincode::deserialize::<Vec<DirectoryEntry>>(&inode.data).unwrap()
+    //                         // bincode::deserialize(&inode.data).unwrap_or_default()
+    //                     };
+
+    //                     for entry in dir_entries {
+    //                         let file_type = if let Some(attr) = inner.inode_attrs.get(&entry.ino) {
+    //                             attr.kind
+    //                         } else if let Ok(child_inode) = inner.load_inode(entry.ino) {
+    //                             let kind = child_inode.attr.kind;
+    //                             let child_inode = child_inode.clone();
+    //                             // Cache it into memory for future use
+    //                             inner.inode_attrs.insert(entry.ino, child_inode.attr.into());
+    //                             inner.inode_data.insert(entry.ino, child_inode.data);
+    //                             kind.into()
+    //                         } else {
+    //                             // Assume regular file if unknown
+    //                             // SerializableFileType::RegularFile.into()
+    //                             FileType::RegularFile
+    //                         };
+
+    //                         entries.push((entry.ino, file_type, entry.name.clone()));
+    //                     }
+    //                 }
+    //                 Err(_) => {
+    //                     reply.error(ENOENT);
+    //                     return;
+    //                 }
+    //             }
+
+    //             entries
+    //         };
+
+    //         for (i, entry) in entries.into_iter().enumerate().skip(offset as usize) {
+    //             if reply.add(entry.0, (i + 1) as i64, entry.1, entry.2) {
+    //                 break;
+    //             }
+    //         }
+
+    //         reply.ok();
+    //     });
+    // }
+
+    fn unlink(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: fuser::ReplyEmpty) {
+        let core = self.core.clone();
+        let name = name.to_str().unwrap_or("").to_string();
+
+        tokio::spawn(async move {
+            let result = core.unlink(parent, &name).await;
+
+            match result {
+                Ok(_) => reply.ok(),
+                Err(_) => reply.error(libc::ENOENT),
+            }
+        });
+    }
     fn open(&mut self, _req: &Request<'_>, ino: u64, _flags: i32, reply: ReplyOpen) {
         let core = self.core.clone(); // you'll need Arc<Mutex<FsCore>>
         tokio::spawn(async move {
             core.with_inner(|inner| {
-                if inner.inode_attrs.contains_key(&ino) {
-                    // Return 0 ,we don’t track handles yet, will return a file handle (fh)
-                    reply.opened(0, 0);
-                } else {
-                    reply.error(libc::ENOENT);
+                match inner.load_inode(ino) {
+                    Ok(_) => {
+                        // Successfully found inode on disk
+                        reply.opened(0, 0);
+                    }
+                    Err(_) => {
+                        reply.error(libc::ENOENT);
+                    }
                 }
             })
             .await;
@@ -190,13 +297,29 @@ impl Filesystem for AwsomeFs {
         _lock_owner: Option<u64>,
         reply: fuser::ReplyWrite,
     ) {
-        let core = self.core.clone(); // you'll need Arc<Mutex<FsCore>>
+        let core = self.core.clone();
         let data = data.to_vec(); // <-- clone the slice into an owned Vec
 
         tokio::spawn(async move {
-            core.with_inner(|inner| {
-                let written = inner.write_and_persist_inode(ino, offset as u64, &data);
-                reply.written(written as u32);
+            core.with_inner(|inner| match inner.load_inode(ino) {
+                Ok(mut inode) => {
+                    let start = offset as usize;
+                    let end = start + data.len();
+
+                    if inode.data.len() < end {
+                        inode.data.resize(end, 0);
+                    }
+
+                    inode.data[start..end].copy_from_slice(&data);
+                    inode.attr.size = inode.data.len() as u64;
+
+                    if let Err(_) = inner.save_inode(ino, &inode) {
+                        reply.error(EIO);
+                    } else {
+                        reply.written(data.len() as u32);
+                    }
+                }
+                Err(_) => reply.error(ENOENT),
             })
             .await;
         });
@@ -209,43 +332,33 @@ impl Filesystem for AwsomeFs {
         name: &OsStr,
         _mode: u32,
         _umask: u32,
-        flags: i32,
+        _flags: i32,
         reply: fuser::ReplyCreate,
     ) {
-        // let path = format!("/{}", name.to_string_lossy());
-
-        tracing::trace!(
-            "FUSE create request for file '{}' in parent inode {}",
-            name.to_str().unwrap(),
-            parent
-        );
-        let core = self.core.clone(); // you'll need Arc<Mutex<FsCore>>
-        let name = name.to_owned();
+        let core = self.core.clone();
+        let name = name.to_str().unwrap_or("").to_string();
 
         tokio::spawn(async move {
-            match core.create_file(parent, name.to_str().unwrap(), b"").await {
-                Ok(ino) => {
-                    core.with_inner(|inner| {
-                        if let Some(attr) = inner.inode_attrs.get(&ino) {
-                            reply.created(
-                                &Duration::from_secs(1),
-                                attr,
-                                0, // generation
-                                flags.try_into().unwrap(),
-                                0, // open_flags
-                            );
-                        } else {
-                            tracing::error!("Missing inode attr after creation");
-                            reply.error(ENOENT);
-                        }
-                    })
-                    .await;
-                }
-                Err(e) => {
-                    tracing::error!("create_file failed: {:?}", e);
+            let ino = match core.create_file(parent, &name, &[]).await {
+                Ok(ino) => ino,
+                Err(_) => {
+                    tracing::error!("create_file failed, parent:{} name:{}", parent, name);
+
                     reply.error(EIO);
+                    return;
                 }
-            }
+            };
+
+            core.with_inner(|inner| match inner.load_inode(ino) {
+                Ok(inode) => {
+                    reply.created(&TTL, &inode.attr.into(), 0, 0, 0);
+                }
+                Err(_) => {
+                    tracing::error!("Missing inode after creation, ino={}", ino);
+                    reply.error(ENOENT);
+                }
+            })
+            .await;
         });
     }
 
@@ -268,46 +381,54 @@ impl Filesystem for AwsomeFs {
         reply: ReplyAttr,
     ) {
         let core = self.core.clone();
-
         tokio::spawn(async move {
             core.with_inner(|inner| {
-                if let Some(attr) = inner.inode_attrs.get_mut(&ino) {
-                    if let Some(new_size) = size {
-                        let data = inner.inode_data.entry(ino).or_insert_with(Vec::new);
-                        data.resize(new_size as usize, 0);
-                        attr.size = new_size;
-                    }
+                match inner.load_inode(ino) {
+                    Ok(mut inode) => {
+                        if let Some(new_size) = size {
+                            inode.data.resize(new_size as usize, 0);
+                            inode.attr.size = new_size;
+                        }
 
-                    if let Some(new_uid) = uid {
-                        attr.uid = new_uid;
-                    }
-                    if let Some(new_gid) = gid {
-                        attr.gid = new_gid;
-                    }
-                    if let Some(new_mtime) = mtime {
-                        attr.mtime = match new_mtime {
-                            TimeOrNow::SpecificTime(t) => t,
-                            TimeOrNow::Now => SystemTime::now(),
-                        };
-                    }
-                    if let Some(new_atime) = atime {
-                        attr.atime = match new_atime {
-                            TimeOrNow::SpecificTime(t) => t,
-                            TimeOrNow::Now => SystemTime::now(),
-                        };
-                    }
-                    if let Some(new_ctime) = ctime {
-                        attr.ctime = new_ctime;
-                    }
+                        if let Some(new_uid) = uid {
+                            inode.attr.uid = new_uid;
+                        }
+                        if let Some(new_gid) = gid {
+                            inode.attr.gid = new_gid;
+                        }
+                        if let Some(new_mtime) = mtime {
+                            inode.attr.mtime = match new_mtime {
+                                TimeOrNow::SpecificTime(t) => t,
+                                TimeOrNow::Now => SystemTime::now(),
+                            };
+                        }
+                        if let Some(new_atime) = atime {
+                            inode.attr.atime = match new_atime {
+                                TimeOrNow::SpecificTime(t) => t,
+                                TimeOrNow::Now => SystemTime::now(),
+                            };
+                        }
+                        if let Some(new_ctime) = ctime {
+                            inode.attr.ctime = new_ctime;
+                        }
 
-                    reply.attr(&TTL, attr);
-                } else {
-                    reply.error(libc::ENOENT);
+                        // Save modified inode back to disk
+                        if let Err(e) = inner.save_inode(ino, &inode) {
+                            tracing::error!("Failed to save inode after setattr: {:?}", e);
+                            reply.error(libc::EIO);
+                            return;
+                        }
+
+                        // Reply with updated attributes
+                        reply.attr(&TTL, &inode.attr.into());
+                    }
+                    Err(_) => {
+                        reply.error(libc::ENOENT);
+                    }
                 }
             })
             .await;
         });
     }
-
     // Implement more methods: readdir, read, write, etc.
 }

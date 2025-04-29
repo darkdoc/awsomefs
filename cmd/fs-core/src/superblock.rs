@@ -15,7 +15,7 @@ pub struct Superblock {
     pub inode_count: u64, // Total number of inodes
     // pub block_count: u64,      // Total number of blocks
     // pub free_block_count: u64, // Free block count
-    pub free_inode_count: u64, // Free inode count
+    // pub free_inode_count: u64, // Free inode count
 }
 
 impl Superblock {
@@ -27,13 +27,13 @@ impl Superblock {
             uuid,
             block_size,
             inode_count: total_inodes,
-            free_inode_count: total_inodes,
+            // free_inode_count: total_inodes,
         }
     }
 
-    pub fn load(file: &mut File) -> std::io::Result<Self> {
+    pub fn load(file: &mut File, block_size: usize) -> std::io::Result<Self> {
         file.seek(SeekFrom::Start(SUPERBLOCK_OFFSET))?;
-        let mut buf = [0u8; 512];
+        let mut buf = vec![0u8; block_size];
         file.read_exact(&mut buf)?;
         let sb: Superblock = bincode::deserialize(&buf)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
@@ -46,11 +46,11 @@ impl Superblock {
         Ok(sb)
     }
 
-    pub fn save(&self, file: &mut File) -> std::io::Result<()> {
+    pub fn save(&self, file: &mut File, block_size: usize) -> std::io::Result<()> {
         file.seek(SeekFrom::Start(SUPERBLOCK_OFFSET))?;
         let buf = bincode::serialize(self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-        let mut padded = vec![0u8; 512];
+        let mut padded = vec![0u8; block_size];
         padded[..buf.len()].copy_from_slice(&buf);
         file.write_all(&padded)?;
         Ok(())

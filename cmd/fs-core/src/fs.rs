@@ -22,8 +22,8 @@ pub fn format<P: AsRef<Path>>(device_path: P) -> Result<()> {
     let mut bd = BlockDevice::open(&device_path, 4096)?;
     // // Write a magic header or initialize metadata block
 
-    let sb = Superblock::new(4096, 100);
-    sb.save(&mut bd.file).unwrap();
+    let sb = Superblock::new(4096, 1);
+    sb.save(&mut bd.file,bd.block_size).unwrap();
 
     // Here you would write superblock, reserve journal, etc.
     tracing::info!("Format complete.");
@@ -33,7 +33,7 @@ pub fn format<P: AsRef<Path>>(device_path: P) -> Result<()> {
 pub async fn mount<P: AsRef<Path>>(device_path: P, mountpoint: P) -> Result<()> {
     let mut bd = BlockDevice::open(&device_path, 4096)?;
 
-    let _loaded = Superblock::load(&mut bd.file).unwrap();
+    let _loaded = Superblock::load(&mut bd.file, bd.block_size).unwrap();
 
     let options = vec![
         MountOption::RW,
@@ -83,7 +83,7 @@ pub fn debug<P: AsRef<Path>>(device_path: P) -> Result<()> {
 
     let mut bd = BlockDevice::open(&device_path, 4096)?;
 
-    let loaded = Superblock::load(&mut bd.file).unwrap();
+    let loaded = Superblock::load(&mut bd.file, bd.block_size).unwrap();
 
     tracing::info!("Superblock {:?}", loaded);
     Ok(())

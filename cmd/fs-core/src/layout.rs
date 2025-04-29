@@ -1,8 +1,8 @@
-use serde::{Serialize, Deserialize};
-use std::time::SystemTime;
 use fuser::{FileAttr, FileType};
+use serde::{Deserialize, Serialize};
+use std::time::SystemTime;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum SerializableFileType {
     RegularFile,
     Directory,
@@ -11,6 +11,21 @@ pub enum SerializableFileType {
     BlockDevice,
     NamedPipe,
     Socket,
+}
+
+impl PartialEq<FileType> for SerializableFileType {
+    fn eq(&self, other: &FileType) -> bool {
+        matches!(
+            (self, other),
+            (SerializableFileType::RegularFile, FileType::RegularFile)
+                | (SerializableFileType::Directory, FileType::Directory)
+                | (SerializableFileType::Symlink, FileType::Symlink)
+                | (SerializableFileType::CharDevice, FileType::CharDevice)
+                | (SerializableFileType::BlockDevice, FileType::BlockDevice)
+                | (SerializableFileType::NamedPipe, FileType::NamedPipe)
+                | (SerializableFileType::Socket, FileType::Socket)
+        )
+    }
 }
 
 impl From<FileType> for SerializableFileType {
@@ -41,7 +56,7 @@ impl From<SerializableFileType> for FileType {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Copy, Serialize, Deserialize)]
 pub struct SerializableFileAttr {
     pub ino: u64,
     pub size: u64,
@@ -104,9 +119,15 @@ impl From<SerializableFileAttr> for FileAttr {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Debug, Clone, Deserialize)]
 pub struct PersistedInode {
     pub attr: SerializableFileAttr,
     pub data: Vec<u8>,
     pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirectoryEntry {
+    pub name: String,
+    pub ino: u64,
 }
