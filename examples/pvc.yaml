@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: test-awesomefs-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: awesomefs-sc
+  resources:
+    requests:
+      storage: 1Gi

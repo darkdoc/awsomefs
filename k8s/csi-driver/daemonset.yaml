@@ -1,0 +1,65 @@
+#k8s/csi-driver/daemonset.yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: awesomefs-csi
+  labels:
+    app: awesomefs-csi
+spec:
+  selector:
+    matchLabels:
+      app: awesomefs-csi
+  template:
+    metadata:
+      labels:
+        app: awesomefs-csi
+    spec:
+      serviceAccountName: awsomefs-csi-sa
+      containers:
+        - name: csi-driver
+          image: localhost/awsomefs/csi-awsomefs:latest
+          imagePullPolicy: Never
+          securityContext:
+            privileged: true
+          args:
+            - "--mode=node"
+            - "--endpoint=unix://csi/csi.sock"
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            - name: kubelet-dir
+              mountPath: /var/lib/kubelet
+              mountPropagation: "Bidirectional"
+
+        - name: csi-registrar
+          image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.10.0
+          args:
+            - "--v=5"
+            - "--csi-address=/csi/csi.sock"
+            - "--kubelet-registration-path=/var/lib/kubelet/plugins/awsomefs.csi.driver/csi.sock"
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            - name: registration-dir
+              mountPath: /registration
+
+      volumes:
+        - name: socket-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/awsomefs.csi.driver
+            type: DirectoryOrCreate
+
+        - name: registration-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins_registry
+            type: Directory
+
+        - name: kubelet-dir
+          hostPath:
+            path: /var/lib/kubelet
+            type: Directory
