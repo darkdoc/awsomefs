@@ -71,10 +71,18 @@ impl FsCoreInner {
         self.inode_counter += 1;
         let ino = self.inode_counter;
 
+
+        let parent_path = self
+            .path_to_ino
+            .iter()
+            .find(|(_, &ino)| ino == parent_ino)
+            .map(|(p, _)| p.clone())
+            .unwrap();
+
         let path = if parent_ino == ROOT_INO {
             format!("/{}", name)
         } else {
-            unimplemented!("nested dirs not yet supported");
+            format!("{}/{}", parent_path, name)
         };
 
         // Create attributes for the new file
