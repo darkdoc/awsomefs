@@ -358,11 +358,17 @@ impl FsCoreInner {
             blksize: 512,
         };
 
+        let parent_path = self
+            .path_to_ino
+            .iter()
+            .find(|(_, &ino)| ino == parent_ino)
+            .map(|(p, _)| p.clone())
+            .unwrap();
+
         let path = if parent_ino == ROOT_INO {
             format!("/{}", name)
         } else {
-            // In real FS: lookup parent path and concatenate
-            unimplemented!("nested dirs not yet fully supported yet");
+            format!("{}/{}", parent_path, name)
         };
 
         // Persist the new director's inode
@@ -398,12 +404,6 @@ impl FsCoreInner {
 
             let serialized = bincode::serialize(&entries).unwrap();
 
-            let parent_path = self
-                .path_to_ino
-                .iter()
-                .find(|(_, &ino)| ino == parent_ino)
-                .map(|(p, _)| p.clone())
-                .unwrap();
 
             let parent_inode = PersistedInode {
                 attr: self.inode_attrs.get(&parent_ino).unwrap().clone().into(),

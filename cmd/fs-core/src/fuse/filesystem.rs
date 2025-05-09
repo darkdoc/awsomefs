@@ -26,13 +26,26 @@ impl AwsomeFs {
 }
 
 impl Filesystem for AwsomeFs {
-    fn lookup(&mut self, _req: &Request<'_>, _parent: u64, name: &OsStr, reply: ReplyEntry) {
-        let path = format!("/{}", name.to_str().unwrap_or(""));
+    fn lookup(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: ReplyEntry) {
+        let name = name.to_owned();
         let core = self.core.clone();
 
         tokio::spawn(async move {
             core.with_inner(|inner| {
                 inner.load_superblock().unwrap();
+
+                let parent_path = inner
+                    .path_to_ino
+                    .iter()
+                    .find(|(_, &ino)| ino == parent)
+                    .map(|(p, _)| p.clone())
+                    .unwrap();
+
+                let path = if parent == crate::ROOT_INO {
+                    format!("/{}", name.to_str().unwrap())
+                } else {
+                    format!("{}/{}", parent_path, name.to_str().unwrap())
+                };
 
                 for ino in 1..inner.inode_counter + 1 {
                     if let Ok(inode) = inner.get_or_load_inode(ino) {
