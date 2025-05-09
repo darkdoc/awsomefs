@@ -18,12 +18,17 @@ spec:
         - name: csi-driver
           image: localhost/awsomefs/csi-awsomefs:latest
           imagePullPolicy: Never
+          securityContext:
+            privileged: true
           args:
             - "--endpoint=unix://csi/csi.sock"
             - "--mode=controller"
           volumeMounts:
             - name: socket-dir
               mountPath: /csi
+            - name: mountpoint-dir
+              mountPath: /mnt/awsomefs
+              mountPropagation: "Bidirectional"
 
         - name: csi-provisioner
           image: registry.k8s.io/sig-storage/csi-provisioner:v3.6.0
@@ -40,3 +45,7 @@ spec:
           hostPath:
             path: /var/lib/kubelet/plugins/awsomefs.csi.driver
             type: DirectoryOrCreate
+        - name: mountpoint-dir
+          hostPath:
+            path: /mnt/awsomefs
+            type: Directory

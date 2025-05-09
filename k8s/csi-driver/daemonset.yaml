@@ -35,6 +35,9 @@ spec:
             - name: kubelet-dir
               mountPath: /var/lib/kubelet
               mountPropagation: "Bidirectional"
+            - name: mountpoint-dir
+              mountPath: /mnt/awsomefs  # This must match baseMountPath
+              mountPropagation: "Bidirectional"
 
         - name: csi-registrar
           image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.10.0
@@ -63,3 +66,8 @@ spec:
           hostPath:
             path: /var/lib/kubelet
             type: Directory
+
+        - name: mountpoint-dir
+          hostPath:
+            path: /mnt/awsomefs
+            type: DirectoryOrCreate
