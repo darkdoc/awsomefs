@@ -71,7 +71,6 @@ impl FsCoreInner {
         self.inode_counter += 1;
         let ino = self.inode_counter;
 
-
         let parent_path = self
             .path_to_ino
             .iter()
@@ -267,29 +266,57 @@ impl FsCoreInner {
     }
 
     pub fn unlink_locked(&mut self, parent_ino: u64, name: &str) -> anyhow::Result<()> {
-        unimplemented!("nested dirs not yet fully supported yet");
+        self.load_superblock()?;
+
+        let parent_path = self
+            .path_to_ino
+            .iter()
+            .find(|(_, &ino)| ino == parent_ino)
+            .map(|(p, _)| p.clone())
+            .unwrap();
 
         // Remove the file from the parent directory
-        // if let Some(parent) = self.parent_to_children.get_mut(&parent_ino) {
-        //     if let Some(ino) = parent.remove(name) {
-        //         // 1. Remove the inode data (file attributes and data)
-        //         self.inode_attrs.remove(&ino);
-        //         self.inode_data.remove(&ino);
+        if let Some(parent) = self.parent_to_children.get_mut(&parent_ino) {
+            if let Some(ino) = parent.remove(name) {
+                // 1. Remove the inode data (file attributes and data)
+                self.inode_attrs.remove(&ino);
+                self.inode_data.remove(&ino);
 
-        //         // 2. Remove the file path reference
-        //         self.path_to_ino.retain(|_, v| *v != ino);
+                // 2. Remove the file path reference
+                self.path_to_ino.retain(|_, v| *v != ino);
 
-        //         // 3. Remove the inode from disk
-        //         self.delete_inode_from_disk(ino)?;
+                // 3. Remove the inode from disk
+                self.delete_inode_from_disk(ino)?;
 
-        //         // Success
-        //         Ok(())
-        //     } else {
-        //         Err(anyhow::anyhow!("File not found in directory").into())
-        //     }
-        // } else {
-        //     Err(anyhow::anyhow!("Parent directory not found").into())
-        // }
+                // Regenerate and persist the parent directory's data
+                if let Some(children) = self.parent_to_children.get(&parent_ino) {
+                    let entries: Vec<DirectoryEntry> = children
+                        .iter()
+                        .map(|(name, ino)| DirectoryEntry {
+                            name: name.clone(),
+                            ino: *ino,
+                        })
+                        .collect();
+
+                    let serialized = bincode::serialize(&entries).unwrap();
+
+                    let parent_inode = PersistedInode {
+                        attr: self.inode_attrs.get(&parent_ino).unwrap().clone().into(),
+                        data: serialized,
+                        path: parent_path.clone(),
+                    };
+                    self.save_inode(parent_ino, &parent_inode)?;
+                }
+
+                // Success
+                self.save_superblock()?;
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("File not found in directory").into())
+            }
+        } else {
+            Err(anyhow::anyhow!("Parent directory not found").into())
+        }
     }
 
     fn delete_inode_from_disk(&mut self, ino: u64) -> std::io::Result<()> {
@@ -411,7 +438,6 @@ impl FsCoreInner {
                 .collect();
 
             let serialized = bincode::serialize(&entries).unwrap();
-
 
             let parent_inode = PersistedInode {
                 attr: self.inode_attrs.get(&parent_ino).unwrap().clone().into(),

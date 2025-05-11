@@ -198,75 +198,6 @@ impl Filesystem for AwsomeFs {
         });
     }
 
-    // fn readdir(
-    //     &mut self,
-    //     _req: &Request<'_>,
-    //     ino: u64,
-    //     _fh: u64,
-    //     offset: i64,
-    //     mut reply: ReplyDirectory,
-    // ) {
-    //     let core = self.core.clone();
-
-    //     tokio::task::block_in_place(|| {
-    //         let entries = {
-    //             let mut inner = core.blocking_lock_inner();
-
-    //             let mut entries = vec![
-    //                 (ino, FileType::Directory, ".".into()),
-    //                 (crate::ROOT_INO, FileType::Directory, "..".into()),
-    //             ];
-
-    //             match inner.load_inode(ino) {
-    //                 Ok(inode) => {
-    //                     tracing::error!("readdir Loaded inode: {:?}", inode);
-    //                     let dir_entries: Vec<DirectoryEntry> = if inode.data.is_empty()
-    //                         || inode.attr.kind != fuser::FileType::Directory
-    //                     {
-    //                         Vec::new()
-    //                     } else {
-    //                         bincode::deserialize::<Vec<DirectoryEntry>>(&inode.data).unwrap()
-    //                         // bincode::deserialize(&inode.data).unwrap_or_default()
-    //                     };
-
-    //                     for entry in dir_entries {
-    //                         let file_type = if let Some(attr) = inner.inode_attrs.get(&entry.ino) {
-    //                             attr.kind
-    //                         } else if let Ok(child_inode) = inner.load_inode(entry.ino) {
-    //                             let kind = child_inode.attr.kind;
-    //                             let child_inode = child_inode.clone();
-    //                             // Cache it into memory for future use
-    //                             inner.inode_attrs.insert(entry.ino, child_inode.attr.into());
-    //                             inner.inode_data.insert(entry.ino, child_inode.data);
-    //                             kind.into()
-    //                         } else {
-    //                             // Assume regular file if unknown
-    //                             // SerializableFileType::RegularFile.into()
-    //                             FileType::RegularFile
-    //                         };
-
-    //                         entries.push((entry.ino, file_type, entry.name.clone()));
-    //                     }
-    //                 }
-    //                 Err(_) => {
-    //                     reply.error(ENOENT);
-    //                     return;
-    //                 }
-    //             }
-
-    //             entries
-    //         };
-
-    //         for (i, entry) in entries.into_iter().enumerate().skip(offset as usize) {
-    //             if reply.add(entry.0, (i + 1) as i64, entry.1, entry.2) {
-    //                 break;
-    //             }
-    //         }
-
-    //         reply.ok();
-    //     });
-    // }
-
     fn unlink(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: fuser::ReplyEmpty) {
         let core = self.core.clone();
         let name = name.to_str().unwrap_or("").to_string();
@@ -280,6 +211,7 @@ impl Filesystem for AwsomeFs {
             }
         });
     }
+
     fn open(&mut self, _req: &Request<'_>, ino: u64, _flags: i32, reply: ReplyOpen) {
         let core = self.core.clone(); // you'll need Arc<Mutex<FsCore>>
         tokio::spawn(async move {
@@ -441,6 +373,20 @@ impl Filesystem for AwsomeFs {
                 }
             })
             .await;
+        });
+    }
+
+    fn rmdir(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: fuser::ReplyEmpty) {
+        let core = self.core.clone();
+        let name = name.to_str().unwrap_or("").to_string();
+
+        tokio::spawn(async move {
+            let result = core.unlink(parent, &name).await;
+
+            match result {
+                Ok(_) => reply.ok(),
+                Err(_) => reply.error(libc::ENOENT),
+            }
         });
     }
     // Implement more methods: readdir, read, write, etc.
