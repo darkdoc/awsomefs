@@ -12,6 +12,25 @@ spec:
         app: fs-core
     spec:
       initContainers:
+        - name: format-device
+          image: localhost/awsomefs/fs-core:latest
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              if blkid /dev/sdb; then
+                echo "Filesystem already exists on /dev/sdb, skipping format."
+              else
+                echo "No filesystem found on /dev/sdb, formatting..."
+                fs-core format --device /dev/sdb
+              fi
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: raw-device
+              mountPath: /dev/sdb
+          imagePullPolicy: Never
         - name: create-mount-dir
           image: busybox:latest
           command: ["sh", "-c", "mkdir -p /mnt/awsomefs"]

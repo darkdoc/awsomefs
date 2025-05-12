@@ -16,14 +16,21 @@ use crate::BlockDevice;
 use crate::FsCore;
 use crate::Superblock;
 
+const DEFAULT_BLOCK_SIZE: usize = 4096;
+
 pub fn format<P: AsRef<Path>>(device_path: P) -> Result<()> {
+    if is_formatted(&device_path).unwrap() {
+        tracing::info!("Device alread formatted, skipping");
+        return Ok(());
+    }
+
     tracing::info!("Formatting device: {:?}", device_path.as_ref());
 
     let mut bd = BlockDevice::open(&device_path, 4096)?;
     // // Write a magic header or initialize metadata block
 
     let sb = Superblock::new(4096, 1);
-    sb.save(&mut bd.file,bd.block_size).unwrap();
+    sb.save(&mut bd.file, bd.block_size).unwrap();
 
     // Here you would write superblock, reserve journal, etc.
     tracing::info!("Format complete.");
@@ -87,4 +94,17 @@ pub fn debug<P: AsRef<Path>>(device_path: P) -> Result<()> {
 
     tracing::info!("Superblock {:?}", loaded);
     Ok(())
+}
+
+pub fn is_formatted<P: AsRef<Path>>(device_path: P) -> std::io::Result<bool> {
+    // let mut file = OpenOptions::new()
+    //     .read(true)
+    //     .open(device)?;
+    let mut bd = BlockDevice::open(&device_path, 4096)?;
+
+    match Superblock::load(&mut bd.file, DEFAULT_BLOCK_SIZE) {
+        Ok(_) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => Ok(false),
+        Err(e) => Err(e),
+    }
 }
