@@ -26,7 +26,8 @@ func NewDriver(name, version, endpoint string) (*Driver, error) {
 	return &Driver{name: name, version: version, endpoint: endpoint}, nil
 }
 
-func (d *Driver) Run(mode string) error {
+func (d *Driver) Run() error {
+
 	network, addr, err := parseEndpoint(d.endpoint)
 	if err != nil {
 		return fmt.Errorf("invalid endpoint: %v", err)
@@ -37,29 +38,20 @@ func (d *Driver) Run(mode string) error {
 			return err
 		}
 	}
-
-	server := grpc.NewServer()
-	csi.RegisterIdentityServer(server, d)
-
-	mode = strings.ToLower(mode)
-	log.Printf("Driver starting in mode: %s", mode)
-
-	switch mode {
-	case "controller":
-		csi.RegisterControllerServer(server, d)
-	case "node":
-		csi.RegisterNodeServer(server, d)
-	default:
-		log.Fatalf("invalid mode: %s", mode)
-	}
-
-	reflection.Register(server)
-
+	// Setup listener first to avoid registrar racing too early
 	listener, err := net.Listen(network, addr)
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %v", d.endpoint, err)
 	}
 	log.Printf("Listening on: %s %s", network, addr)
+
+	server := grpc.NewServer()
+
+	csi.RegisterIdentityServer(server, d)
+	csi.RegisterControllerServer(server, d)
+	csi.RegisterNodeServer(server, d)
+
+	reflection.Register(server)
 
 	return server.Serve(listener)
 }
